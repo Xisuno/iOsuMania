@@ -1,0 +1,55 @@
+name: Build IPA from ZIP
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Descompactar o ZIP do projeto
+        run: |
+          set -e
+          ZIP=$(ls -1 *.zip 2>/dev/null | head -n 1 || true)
+          if [ -z "$ZIP" ]; then echo "Nenhum .zip encontrado na raiz do repositório"; exit 1; fi
+          echo "Usando: $ZIP"
+          rm -rf proj && mkdir proj
+          unzip -q "$ZIP" -d proj
+          # acha a pasta que contém o Info.plist (funciona com ou sem subpastas)
+          PLIST=$(find proj -name Info.plist -not -path "*/__MACOSX/*" | head -n 1)
+          if [ -z "$PLIST" ]; then echo "Info.plist não encontrado dentro do zip"; exit 1; fi
+          dirname "$PLIST" > projdir.txt
+          echo "Projeto em: $(cat projdir.txt)"
+          find "$(cat projdir.txt)" -name "*.swift" -not -path "*/__MACOSX/*" | sort
+
+      - name: Compilar e montar o IPA (sem assinatura)
+        run: |
+          set -e
+          PROJ="$(cat projdir.txt)"
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          rm -rf build && mkdir -p build/Payload/ManiaIOS.app
+          APP=build/Payload/ManiaIOS.app
+
+          find "$PROJ" -name "*.swift" -not -path "*/__MACOSX/*" > swiftfiles.txt
+
+          xcrun --sdk iphoneos swiftc \
+            -target arm64-apple-ios15.0 \
+            -sdk "$SDK" \
+            -O -parse-as-library \
+            -module-name ManiaIOS \
+            -o "$APP/ManiaIOS" \
+            @swiftfiles.txt
+
+          cp "$PROJ/Info.plist" "$APP/Info.plist"
+          printf 'APPL????' > "$APP/PkgInfo"
+          codesign -f -s - "$APP" 2>/dev/null || true
+
+          (cd build && zip -qry ManiaIOS.ipa Payload)
+          ls -la build/ManiaIOS.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ManiaIOS-ipa
+          path: build/ManiaIOS.ipa
