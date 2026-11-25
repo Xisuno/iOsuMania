@@ -67,6 +67,13 @@ final class ParserTests: XCTestCase {
         XCTAssertEqual(s.nested.last?.kind, .tail)
     }
 
+    func testParsesWindowsLineEndings() throws {
+        let crlf = sampleMap.replacingOccurrences(of: "\n", with: "\r\n")
+        let map = try BeatmapParser.parse(crlf)
+        XCTAssertEqual(map.metadata.title, "Test")
+        XCTAssertEqual(map.hitObjects.count, 3)
+    }
+
     func testRejectsNonOsuFile() {
         XCTAssertThrowsError(try BeatmapParser.parse("hello"))
     }

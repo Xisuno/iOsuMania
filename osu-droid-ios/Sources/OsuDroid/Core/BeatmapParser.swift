@@ -15,7 +15,7 @@ enum BeatmapParser {
         var arSpecified = false
 
         let text = rawText.hasPrefix("\u{FEFF}") ? String(rawText.dropFirst()) : rawText
-        for rawLine in text.split(omittingEmptySubsequences: true, whereSeparator: { $0 == "\n" || $0 == "\r" }) {
+        for rawLine in text.split(omittingEmptySubsequences: true, whereSeparator: { $0.isNewline }) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.isEmpty || line.hasPrefix("//") { continue }
 

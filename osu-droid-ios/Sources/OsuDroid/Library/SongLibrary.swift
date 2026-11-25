@@ -82,8 +82,8 @@ final class SongLibrary: ObservableObject {
             var difficulties: [DifficultyEntry] = []
             var title = folder.lastPathComponent, artist = "", creator = ""
             for file in files where file.pathExtension.lowercased() == "osu" {
-                guard let text = try? String(contentsOf: file, encoding: .utf8),
-                      let map = try? BeatmapParser.parse(text, includeHitObjects: false),
+                guard let data = try? Data(contentsOf: file),
+                      let map = try? BeatmapParser.parse(String(decoding: data, as: UTF8.self), includeHitObjects: false),
                       map.general.mode == 0 else { continue }
                 if !map.metadata.title.isEmpty { title = map.metadata.title }
                 artist = map.metadata.artist; creator = map.metadata.creator

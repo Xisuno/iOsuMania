@@ -92,7 +92,7 @@ struct PlayView: View {
     private func load(size: CGSize) {
         guard scene == nil else { return }
         do {
-            let text = try String(contentsOf: selection.difficulty.fileURL, encoding: .utf8)
+            let text = String(decoding: try Data(contentsOf: selection.difficulty.fileURL), as: UTF8.self)
             let map = try BeatmapParser.parse(text)
             guard !map.hitObjects.isEmpty else { loadError = "This difficulty has no hit objects."; return }
             let audio = SongLibrary.resolveFile(named: map.general.audioFilename, in: selection.song.folder)

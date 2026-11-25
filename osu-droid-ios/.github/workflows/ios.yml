@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
+  # Fast path: only produces the unsigned IPA.
   build:
     runs-on: macos-15
     steps:
@@ -13,19 +14,53 @@ jobs:
 
       - name: Locate project.yml
         run: |
-          SPEC=$(find . -name project.yml -not -path './.git/*' -not -path '*/node_modules/*' | head -1)
+          SPEC=$(find . -name project.yml -not -path './.git/*' | head -1)
           if [ -z "$SPEC" ]; then
-            echo "::error::project.yml not found anywhere in the repository. Upload the contents of osu-droid-ios.zip (project.yml, Sources/, Tests/) to the repo."
-            echo "Top-level repository contents:"; ls -la
-            exit 1
+            echo "::error::project.yml not found in the repository."; ls -la; exit 1
           fi
-          echo "Found spec: $SPEC"
           echo "PROJECT_DIR=$(dirname "$SPEC")" >> "$GITHUB_ENV"
 
-      - name: Show toolchain and project files
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: cd "$PROJECT_DIR" && xcodegen generate
+
+      - name: Build unsigned IPA (device)
         run: |
-          xcodebuild -version
-          cd "$PROJECT_DIR" && pwd && ls -la && ls Sources Tests
+          set -o pipefail
+          cd "$PROJECT_DIR"
+          xcodebuild archive \
+            -project OsuDroidiOS.xcodeproj \
+            -scheme OsuDroidiOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/OsuDroidiOS.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" 2>&1 | tee build.log | tail -40
+          mkdir -p build/ipa/Payload
+          cp -R build/OsuDroidiOS.xcarchive/Products/Applications/OsuDroidiOS.app build/ipa/Payload/
+          (cd build/ipa && zip -qry ../OsuDroidiOS-unsigned.ipa Payload)
+
+      - name: Show compiler errors
+        if: failure()
+        run: cd "$PROJECT_DIR" && grep -hE "error:" build.log 2>/dev/null | sort -u | head -80 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OsuDroidiOS-unsigned-ipa
+          path: ${{ env.PROJECT_DIR }}/build/OsuDroidiOS-unsigned.ipa
+
+  # Runs in parallel; a failure here does not block the IPA above.
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Locate project.yml
+        run: |
+          SPEC=$(find . -name project.yml -not -path './.git/*' | head -1)
+          [ -n "$SPEC" ] || { echo "::error::project.yml not found"; exit 1; }
+          echo "PROJECT_DIR=$(dirname "$SPEC")" >> "$GITHUB_ENV"
 
       - name: Install XcodeGen
         run: brew install xcodegen
@@ -38,44 +73,12 @@ jobs:
           set -o pipefail
           cd "$PROJECT_DIR"
           UDID=$(xcrun simctl list devices available | grep -m1 'iPhone' | grep -oE '[0-9A-F]{8}-([0-9A-F]{4}-){3}[0-9A-F]{12}')
-          echo "Using simulator UDID: $UDID"
           xcodebuild test \
             -project OsuDroidiOS.xcodeproj \
             -scheme OsuDroidiOS \
             -destination "platform=iOS Simulator,id=$UDID" \
-            CODE_SIGNING_ALLOWED=NO 2>&1 | tee test.log | tail -80
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee test.log | tail -40
 
-      - name: Build unsigned IPA (device)
-        run: |
-          set -o pipefail
-          cd "$PROJECT_DIR"
-          xcodebuild archive \
-            -project OsuDroidiOS.xcodeproj \
-            -scheme OsuDroidiOS \
-            -configuration Release \
-            -sdk iphoneos \
-            -archivePath build/OsuDroidiOS.xcarchive \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" 2>&1 | tee build.log | tail -60
-          mkdir -p build/ipa/Payload
-          cp -R build/OsuDroidiOS.xcarchive/Products/Applications/OsuDroidiOS.app build/ipa/Payload/
-          (cd build/ipa && zip -qry ../OsuDroidiOS-unsigned.ipa Payload)
-
-      - name: Show compiler errors
+      - name: Show errors and failed tests
         if: failure()
-        run: |
-          cd "$PROJECT_DIR"
-          echo "==== error lines from xcodebuild logs ===="
-          grep -hE "error:|Testing failed|failed:" test.log build.log 2>/dev/null | sort -u | head -80 || true
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: OsuDroidiOS-unsigned-ipa
-          path: ${{ env.PROJECT_DIR }}/build/OsuDroidiOS-unsigned.ipa
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: xcodebuild-logs
-          path: |
-            ${{ env.PROJECT_DIR }}/test.log
-            ${{ env.PROJECT_DIR }}/build.log
+        run: cd "$PROJECT_DIR" && grep -hE "error:|Test Case .* failed|Testing failed" test.log 2>/dev/null | sort -u | head -80 || true
