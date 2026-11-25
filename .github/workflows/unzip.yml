@@ -9,7 +9,7 @@ on:
       zip_path:
         description: 'Repo-relative path to the .zip file (e.g. pg3d_cheat_mc1h.zip)'
         required: true
-        default: 'pg3d_cheat_mc1h.zip'
+        default: 'osu-droid-ios.zip'
       destination:
         description: 'Extraction root — use . if the zip already contains its own top-level folder'
         required: true
