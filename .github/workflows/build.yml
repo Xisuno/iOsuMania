@@ -1,55 +1,59 @@
-name: Build IPA from ZIP
+name: iOS build
+
 on:
   push:
+  pull_request:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Descompactar o ZIP do projeto
+      - name: Show toolchain
         run: |
-          set -e
-          ZIP=$(ls -1 *.zip 2>/dev/null | head -n 1 || true)
-          if [ -z "$ZIP" ]; then echo "Nenhum .zip encontrado na raiz do repositório"; exit 1; fi
-          echo "Usando: $ZIP"
-          rm -rf proj && mkdir proj
-          unzip -q "$ZIP" -d proj
-          # acha a pasta que contém o Info.plist (funciona com ou sem subpastas)
-          PLIST=$(find proj -name Info.plist -not -path "*/__MACOSX/*" | head -n 1)
-          if [ -z "$PLIST" ]; then echo "Info.plist não encontrado dentro do zip"; exit 1; fi
-          dirname "$PLIST" > projdir.txt
-          echo "Projeto em: $(cat projdir.txt)"
-          find "$(cat projdir.txt)" -name "*.swift" -not -path "*/__MACOSX/*" | sort
+          xcodebuild -version
+          xcrun simctl list devices available | head -30
 
-      - name: Compilar e montar o IPA (sem assinatura)
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Unit tests (simulator)
         run: |
-          set -e
-          PROJ="$(cat projdir.txt)"
-          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          rm -rf build && mkdir -p build/Payload/ManiaIOS.app
-          APP=build/Payload/ManiaIOS.app
+          set -o pipefail
+          DEVICE=$(xcrun simctl list devices available | grep -m1 -oE 'iPhone [0-9]+[^(]*' | sed 's/ *$//')
+          echo "Using simulator: $DEVICE"
+          xcodebuild test \
+            -project OsuDroidiOS.xcodeproj \
+            -scheme OsuDroidiOS \
+            -destination "platform=iOS Simulator,name=$DEVICE" \
+            CODE_SIGNING_ALLOWED=NO | tee test.log | tail -60
 
-          find "$PROJ" -name "*.swift" -not -path "*/__MACOSX/*" > swiftfiles.txt
-
-          xcrun --sdk iphoneos swiftc \
-            -target arm64-apple-ios15.0 \
-            -sdk "$SDK" \
-            -O -parse-as-library \
-            -module-name ManiaIOS \
-            -o "$APP/ManiaIOS" \
-            @swiftfiles.txt
-
-          cp "$PROJ/Info.plist" "$APP/Info.plist"
-          printf 'APPL????' > "$APP/PkgInfo"
-          codesign -f -s - "$APP" 2>/dev/null || true
-
-          (cd build && zip -qry ManiaIOS.ipa Payload)
-          ls -la build/ManiaIOS.ipa
+      - name: Build unsigned IPA (device)
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project OsuDroidiOS.xcodeproj \
+            -scheme OsuDroidiOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -archivePath build/OsuDroidiOS.xcarchive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" | tail -40
+          mkdir -p build/ipa/Payload
+          cp -R build/OsuDroidiOS.xcarchive/Products/Applications/OsuDroidiOS.app build/ipa/Payload/
+          (cd build/ipa && zip -qry ../OsuDroidiOS-unsigned.ipa Payload)
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ManiaIOS-ipa
-          path: build/ManiaIOS.ipa
+          name: OsuDroidiOS-unsigned-ipa
+          path: build/OsuDroidiOS-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-log
+          path: test.log
