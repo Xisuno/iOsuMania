@@ -60,6 +60,13 @@ jobs:
           cp -R build/OsuDroidiOS.xcarchive/Products/Applications/OsuDroidiOS.app build/ipa/Payload/
           (cd build/ipa && zip -qry ../OsuDroidiOS-unsigned.ipa Payload)
 
+      - name: Show compiler errors
+        if: failure()
+        run: |
+          cd "$PROJECT_DIR"
+          echo "==== error lines from xcodebuild logs ===="
+          grep -hE "error:|Testing failed|failed:" test.log build.log 2>/dev/null | sort -u | head -80 || true
+
       - uses: actions/upload-artifact@v4
         with:
           name: OsuDroidiOS-unsigned-ipa
